@@ -1,0 +1,112 @@
+name: CMake windows
+on: [push]
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+jobs:
+  install:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: msys2/setup-msys2@v2
+    
+    - name: Install GIT
+      shell: powershell
+      run: Install-Module posh-git -Scope CurrentUser -Force
+    
+    - name: Install CHOCOLATERY
+      shell: powershell
+      run: Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+
+    - shell: powershell
+      run: choco feature enable -n allowGlobalConfirmation
+      
+    - shell: powershell
+      run: choco install cmake -y --installargs 'ADD_CMAKE_TO_PATH=System'
+      
+    - shell: powershell
+      run: choco install jq
+    
+    - shell: powershell
+      run: refreshenv
+   
+    - shell: msys2 {0}
+      run: |
+       # pacman -Syu --noconfirm
+       pacman -S mingw-w64-x86_64-gcc git make unzip zip --noconfirm
+    
+    - name: Download the latest release of the dependencies.
+      shell: powershell
+      run:  |
+       $URL_Latest = Invoke-WebRequest -Uri https://api.github.com/repos/xmrig/xmrig-deps/releases/latest | Select-Object -Expand Content | jq '.zipball_url'
+       Get-Variable URL_Latest
+       $URL_Latest = $URL_Latest -replace  '"', ""
+       Start-BitsTransfer -Source $URL_Latest -Destination "xmrig-deps.zip"
+       
+    - name: Clone repos
+      shell: powershell
+      run: git clone https://github.com/xmrig/xmrig.git
+      
+    - name: Edit donate.h
+      shell: powershell
+      run: |
+        cd xmrig/src
+        (Get-Content donate.h).replace('constexpr const int kDefaultDonateLevel = 1', 'constexpr const int kDefaultDonateLevel = 0') | Set-Content donate.h
+        (Get-Content donate.h).replace('constexpr const int kMinimumDonateLevel = 1', 'constexpr const int kMinimumDonateLevel = 0') | Set-Content donate.h
+      
+    - shell: msys2 {0}
+      run: |
+       unzip xmrig-deps.zip
+       mv xmrig-xmrig* xmrig-deps
+       mkdir xmrig/build
+
+    - shell: msys2 {0}
+      run: |
+       cd xmrig/build
+       thisreponame="xmrig-AutobuildGithubActionsWINDOWS"
+       'C:\Program Files\CMake\bin\cmake.exe' .. -G "Unix Makefiles" -DXMRIG_DEPS=d:/a/$thisreponame/$thisreponame/xmrig-deps/gcc/x64
+       make -j$(nproc)
+
+    - shell: msys2 {0}
+      run: |
+       cd xmrig
+       zip -r build.zip build
+       mv build.zip ..
+
+    - name: Set Variable of last version
+      shell: powershell
+      run:  |
+       $URL_Latest = Invoke-WebRequest -Uri https://api.github.com/repos/xmrig/xmrig/releases/latest | Select-Object -Expand Content | jq '.tag_name'
+       Get-Variable URL_Latest
+       $URL_Latest = $URL_Latest -replace  '"', ""
+       echo "VERSION=${URL_Latest}" >> $Env:GITHUB_ENV
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${Env:VERSION} xmrig-AutobuildGithubActionsWINDOWS
+          draft: false
+          prerelease: false
+    - name: Upload Release Asset
+      id: upload-release-asset 
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps 
+          asset_path: ./build.zip
+          asset_name: build.zip
+          asset_content_type: application/zip
+       
+       
+       
+       
+       
+       
+       
+       
+       
